@@ -1,4 +1,5 @@
 pipeline {
+
     agent any
 
     stages {
@@ -35,6 +36,10 @@ pipeline {
 
         failure {
             echo 'CI Pipeline failed!'
+        }
+
+        always {
+            echo 'Pipeline execution completed.'
         }
     }
 }
