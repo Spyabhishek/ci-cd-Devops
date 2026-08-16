@@ -47,23 +47,47 @@ pipeline {
             steps {
                 sh '''
                     trivy image \
-                    --timeout 20m \
-                    --scanners vuln \
-                    --severity HIGH,CRITICAL \
-                    --exit-code 1 \
-                    cicd-app:${BUILD_NUMBER}
+                      --timeout 20m \
+                      --scanners vuln \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 1 \
+                      cicd-app:${BUILD_NUMBER}
                 '''
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login \
+                            -u "$DOCKER_USERNAME" \
+                            --password-stdin
+
+                        docker tag cicd-app:${BUILD_NUMBER} \
+                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+
+                        docker push \
+                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+
+                        docker logout
+                    '''
+                }
             }
         }
     }
 
     post {
         success {
-            echo 'CI Pipeline completed successfully!'
+            echo 'CI/CD pipeline completed successfully!'
         }
 
         failure {
-            echo 'CI Pipeline failed!'
+            echo 'CI/CD pipeline failed!'
         }
     }
 }
