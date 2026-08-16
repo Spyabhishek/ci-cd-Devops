@@ -9,18 +9,6 @@ pipeline {
             }
         }
 
-        stage('Test Oracle SSH') {
-    steps {
-        sshagent(['oracle-vm-ssh']) {
-            sh '''
-                ssh -o StrictHostKeyChecking=no \
-                    ubuntu@130.210.25.196 \
-                    "whoami && hostname && docker ps"
-            '''
-        }
-    }
-}
-
         stage('Build & Test') {
             steps {
                 sh './mvnw clean test'
@@ -76,15 +64,17 @@ pipeline {
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh '''
+                        set -e
+
                         echo "$DOCKER_PASSWORD" | docker login \
                             -u "$DOCKER_USERNAME" \
                             --password-stdin
 
                         docker tag cicd-app:${BUILD_NUMBER} \
-                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+                            "$DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}"
 
                         docker push \
-                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+                            "$DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}"
 
                         docker logout
                     '''
@@ -99,151 +89,204 @@ pipeline {
                     usernameVariable: 'DOCKER_USERNAME',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
-                    sh '''
-                        set -e
 
-                        NEW_IMAGE="$DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}"
+                    sshagent(['oracle-vm-ssh']) {
 
-                        echo "New image: $NEW_IMAGE"
+                        sh '''
+                            set -e
 
-                        if docker inspect cicd-app >/dev/null 2>&1; then
-                            PREVIOUS_IMAGE=$(docker inspect cicd-app \
-                                --format='{{.Config.Image}}')
+                            NEW_IMAGE="$DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}"
 
-                            echo "Previous image: $PREVIOUS_IMAGE"
-                        else
-                            PREVIOUS_IMAGE=""
-                            echo "No previous deployment found."
-                        fi
+                            echo "========================================"
+                            echo "Deploying to Oracle VM"
+                            echo "Host: $ORACLE_HOST"
+                            echo "Image: $NEW_IMAGE"
+                            echo "========================================"
 
-                        echo "$PREVIOUS_IMAGE" > previous_image.txt
+                            ssh -o StrictHostKeyChecking=no \
+                                ubuntu@$ORACLE_HOST \
+                                "docker pull $NEW_IMAGE"
 
-                        echo "$DOCKER_PASSWORD" | docker login \
-                            -u "$DOCKER_USERNAME" \
-                            --password-stdin
+                            ssh -o StrictHostKeyChecking=no \
+                                ubuntu@$ORACLE_HOST << EOF
 
-                        docker pull "$NEW_IMAGE"
+                                set -e
 
-                        docker stop cicd-app || true
-                        docker rm cicd-app || true
+                                echo "Checking current deployment..."
 
-                        docker run -d \
-                            --name cicd-app \
-                            --restart unless-stopped \
-                            -p 8081:8081 \
-                            "$NEW_IMAGE"
+                                if docker inspect cicd-app >/dev/null 2>&1; then
 
-                        docker logout
-                    '''
+                                    PREVIOUS_IMAGE=\$(docker inspect cicd-app \
+                                        --format='{{.Config.Image}}')
+
+                                    echo "\$PREVIOUS_IMAGE" > /tmp/cicd-previous-image.txt
+
+                                    echo "Previous image: \$PREVIOUS_IMAGE"
+
+                                else
+
+                                    echo "" > /tmp/cicd-previous-image.txt
+
+                                    echo "No previous deployment found."
+
+                                fi
+
+                                echo "Stopping old container..."
+
+                                docker stop cicd-app || true
+                                docker rm cicd-app || true
+
+                                echo "Starting new container..."
+
+                                docker run -d \
+                                    --name cicd-app \
+                                    --restart unless-stopped \
+                                    -p 8081:8081 \
+                                    "$NEW_IMAGE"
+
+                                echo "New container started."
+
+                                docker ps --filter "name=cicd-app"
+
+                                EOF
+
+                            echo "Deployment completed successfully."
+                        '''
+                    }
                 }
             }
         }
 
-stage('Health Check') {
-    steps {
-        script {
+        stage('Health Check') {
+            steps {
+                sshagent(['oracle-vm-ssh']) {
 
-            def healthCheck = sh(
-                script: '''
-                    for i in $(seq 1 12); do
+                    script {
 
-                        echo "Health check attempt $i..."
+                        def healthCheck = sh(
+                            script: '''
+                                for i in $(seq 1 12); do
 
-                        if curl --fail --silent \
-                            http://localhost:8081/hello; then
+                                    echo "Health check attempt $i..."
 
-                            echo ""
-                            echo "Application is healthy!"
-                            exit 0
-                        fi
+                                    if ssh -o StrictHostKeyChecking=no \
+                                        ubuntu@$ORACLE_HOST \
+                                        "curl --fail --silent http://localhost:8081/hello"; then
 
-                        echo "Application not ready yet..."
-                        sleep 5
-                    done
+                                        echo ""
+                                        echo "Application is healthy!"
+                                        exit 0
 
-                    echo "Health check failed after 60 seconds."
-                    exit 1
-                ''',
-                returnStatus: true
-            )
+                                    fi
 
-           if (healthCheck != 0) {
+                                    echo "Application not ready yet..."
+                                    sleep 5
 
-    echo "Health check FAILED. Starting rollback..."
+                                done
 
-    sh '''
-        PREVIOUS_IMAGE=$(cat previous_image.txt)
+                                echo "Health check failed after 60 seconds."
+                                exit 1
+                            ''',
+                            returnStatus: true
+                        )
 
-        if [ -n "$PREVIOUS_IMAGE" ]; then
+                        if (healthCheck != 0) {
 
-            echo "Rolling back to: $PREVIOUS_IMAGE"
+                            echo "========================================"
+                            echo "HEALTH CHECK FAILED"
+                            echo "Starting rollback..."
+                            echo "========================================"
 
-            docker stop cicd-app || true
-            docker rm cicd-app || true
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no \
+                                    ubuntu@$ORACLE_HOST << 'EOF'
 
-            docker run -d \
-                --name cicd-app \
-                --restart unless-stopped \
-                -p 8081:8081 \
-                "$PREVIOUS_IMAGE"
+                                    set -e
 
-            echo "Rollback completed."
+                                    PREVIOUS_IMAGE=$(cat /tmp/cicd-previous-image.txt 2>/dev/null || true)
 
-        else
+                                    if [ -n "$PREVIOUS_IMAGE" ]; then
 
-            echo "No previous image available for rollback."
-            exit 1
+                                        echo "Rolling back to: $PREVIOUS_IMAGE"
 
-        fi
-    '''
+                                        docker stop cicd-app || true
+                                        docker rm cicd-app || true
 
-    echo "Checking rolled-back application..."
+                                        docker run -d \
+                                            --name cicd-app \
+                                            --restart unless-stopped \
+                                            -p 8081:8081 \
+                                            "$PREVIOUS_IMAGE"
 
-    def rollbackHealthCheck = sh(
-        script: '''
-            for i in $(seq 1 12); do
+                                        echo "Rollback completed."
 
-                echo "Rollback health check attempt $i..."
+                                    else
 
-                if curl --fail --silent \
-                    http://localhost:8081/hello; then
+                                        echo "No previous image available for rollback."
+                                        exit 1
 
-                    echo ""
-                    echo "Rolled-back application is healthy!"
-                    exit 0
-                fi
+                                    fi
 
-                echo "Rolled-back application not ready yet..."
-                sleep 5
-            done
+                                    EOF
+                            '''
 
-            echo "Rollback health check failed."
-            exit 1
-        ''',
-        returnStatus: true
-    )
+                            echo "Checking rolled-back application..."
 
-    if (rollbackHealthCheck != 0) {
-        error("CRITICAL: Deployment failed AND rollback health check failed!")
-    }
+                            def rollbackHealthCheck = sh(
+                                script: '''
+                                    for i in $(seq 1 12); do
 
-    error("Deployment failed. Previous version restored successfully.")
-}
+                                        echo "Rollback health check attempt $i..."
+
+                                        if ssh -o StrictHostKeyChecking=no \
+                                            ubuntu@$ORACLE_HOST \
+                                            "curl --fail --silent http://localhost:8081/hello"; then
+
+                                            echo ""
+                                            echo "Rolled-back application is healthy!"
+                                            exit 0
+
+                                        fi
+
+                                        echo "Rolled-back application not ready yet..."
+                                        sleep 5
+
+                                    done
+
+                                    echo "Rollback health check failed."
+                                    exit 1
+                                ''',
+                                returnStatus: true
+                            )
+
+                            if (rollbackHealthCheck != 0) {
+
+                                error(
+                                    "CRITICAL: Deployment failed AND rollback health check failed!"
+                                )
+
+                            }
+
+                            error(
+                                "Deployment failed. Previous version restored successfully."
+                            )
+                        }
+                    }
+                }
+            }
         }
-    }
-}
 
-stage('Docker Cleanup') {
-    steps {
-        sh '''
-            echo "Cleaning dangling Docker images..."
+        stage('Docker Cleanup') {
+            steps {
+                sh '''
+                    echo "Cleaning dangling Docker images on Jenkins..."
 
-            docker image prune -f
+                    docker image prune -f
 
-            echo "Docker cleanup completed."
-        '''
-    }
-}
+                    echo "Docker cleanup completed."
+                '''
+            }
+        }
     }
 
     post {
