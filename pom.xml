@@ -52,17 +52,20 @@
 	</dependencies>
 
 	<build>
-		<plugins>
-			<plugin>
-				<groupId>org.springframework.boot</groupId>
-				<artifactId>spring-boot-maven-plugin</artifactId>
-			</plugin>
-		</plugins>
-		<plugin>
-    		<groupId>org.sonarsource.scanner.maven</groupId>
-   			<artifactId>sonar-maven-plugin</artifactId>
-    		<version>5.5.0.6356</version>
-		</plugin>
-	</build>
+    <plugins>
+
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+        </plugin>
+
+        <plugin>
+            <groupId>org.sonarsource.scanner.maven</groupId>
+            <artifactId>sonar-maven-plugin</artifactId>
+            <version>5.5.0.6356</version>
+        </plugin>
+
+    </plugins>
+</build>
 
 </project>
