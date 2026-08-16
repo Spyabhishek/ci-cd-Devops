@@ -127,67 +127,69 @@ pipeline {
             }
         }
 
-        stage('Health Check') {
-            steps {
-                script {
+       stage('Health Check') {
+    steps {
+        script {
 
-                    def healthCheck = sh(
-                        script: '''
-                            for i in {1..12}; do
+            def healthCheck = sh(
+                script: '''
+                    for i in $(seq 1 12); do
 
-                                echo "Health check attempt $i..."
+                        echo "Health check attempt $i..."
 
-                                if curl --fail --silent \
-                                    http://localhost:8081/hello; then
+                        if curl --fail --silent \
+                            http://localhost:8081/hello; then
 
-                                    echo ""
-                                    echo "Application is healthy!"
-                                    exit 0
-                                fi
+                            echo ""
+                            echo "Application is healthy!"
+                            exit 0
+                        fi
 
-                                sleep 5
-                            done
+                        echo "Application not ready yet..."
+                        sleep 5
+                    done
 
-                            exit 1
-                        ''',
-                        returnStatus: true
-                    )
+                    echo "Health check failed after 60 seconds."
+                    exit 1
+                ''',
+                returnStatus: true
+            )
 
-                    if (healthCheck != 0) {
+            if (healthCheck != 0) {
 
-                        echo "Health check FAILED. Starting rollback..."
+                echo "Health check FAILED. Starting rollback..."
 
-                        sh '''
-                            PREVIOUS_IMAGE=$(cat previous_image.txt)
+                sh '''
+                    PREVIOUS_IMAGE=$(cat previous_image.txt)
 
-                            if [ -n "$PREVIOUS_IMAGE" ]; then
+                    if [ -n "$PREVIOUS_IMAGE" ]; then
 
-                                echo "Rolling back to: $PREVIOUS_IMAGE"
+                        echo "Rolling back to: $PREVIOUS_IMAGE"
 
-                                docker stop cicd-app || true
-                                docker rm cicd-app || true
+                        docker stop cicd-app || true
+                        docker rm cicd-app || true
 
-                                docker run -d \
-                                    --name cicd-app \
-                                    --restart unless-stopped \
-                                    -p 8081:8081 \
-                                    "$PREVIOUS_IMAGE"
+                        docker run -d \
+                            --name cicd-app \
+                            --restart unless-stopped \
+                            -p 8081:8081 \
+                            "$PREVIOUS_IMAGE"
 
-                                echo "Rollback completed."
+                        echo "Rollback completed."
 
-                            else
+                    else
 
-                                echo "No previous image available for rollback."
-                                exit 1
+                        echo "No previous image available for rollback."
+                        exit 1
 
-                            fi
-                        '''
+                    fi
+                '''
 
-                        error("Deployment failed. Previous version restored.")
-                    }
-                }
+                error("Deployment failed. Previous version restored.")
             }
         }
+    }
+}
     }
 
     post {
