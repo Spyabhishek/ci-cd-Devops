@@ -115,7 +115,7 @@ pipeline {
                     echo "Waiting for application to start..."
                     sleep 10
 
-                    curl --fail http://localhost:8081/Hello
+                    curl --fail http://localhost:8081/hello
 
                     echo "Application is healthy!"
                 '''
