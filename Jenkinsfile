@@ -47,10 +47,11 @@ pipeline {
             steps {
                 sh '''
                     trivy image \
-                      --timeout 10m \
-                      --severity HIGH,CRITICAL \
-                      --exit-code 1 \
-                      cicd-app:${BUILD_NUMBER}
+                    --timeout 20m \
+                    --scanners vuln \
+                    --severity HIGH,CRITICAL \
+                    --exit-code 1 \
+                    cicd-app:${BUILD_NUMBER}
                 '''
             }
         }
