@@ -79,6 +79,48 @@ pipeline {
                 }
             }
         }
+
+        stage('Deploy') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login \
+                            -u "$DOCKER_USERNAME" \
+                            --password-stdin
+
+                        docker pull \
+                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+
+                        docker stop cicd-app || true
+                        docker rm cicd-app || true
+
+                        docker run -d \
+                            --name cicd-app \
+                            -p 8081:8081 \
+                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+
+                        docker logout
+                    '''
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    echo "Waiting for application to start..."
+                    sleep 10
+
+                    curl --fail http://localhost:8081/Hello
+
+                    echo "Application is healthy!"
+                '''
+            }
+        }
     }
 
     post {
