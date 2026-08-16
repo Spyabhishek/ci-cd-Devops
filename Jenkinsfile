@@ -127,7 +127,7 @@ pipeline {
             }
         }
 
-       stage('Health Check') {
+stage('Health Check') {
     steps {
         script {
 
@@ -188,6 +188,18 @@ pipeline {
                 error("Deployment failed. Previous version restored.")
             }
         }
+    }
+}
+
+stage('Docker Cleanup') {
+    steps {
+        sh '''
+            echo "Cleaning dangling Docker images..."
+
+            docker image prune -f
+
+            echo "Docker cleanup completed."
+        '''
     }
 }
     }
