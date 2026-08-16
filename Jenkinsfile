@@ -155,38 +155,68 @@ stage('Health Check') {
                 returnStatus: true
             )
 
-            if (healthCheck != 0) {
+           if (healthCheck != 0) {
 
-                echo "Health check FAILED. Starting rollback..."
+    echo "Health check FAILED. Starting rollback..."
 
-                sh '''
-                    PREVIOUS_IMAGE=$(cat previous_image.txt)
+    sh '''
+        PREVIOUS_IMAGE=$(cat previous_image.txt)
 
-                    if [ -n "$PREVIOUS_IMAGE" ]; then
+        if [ -n "$PREVIOUS_IMAGE" ]; then
 
-                        echo "Rolling back to: $PREVIOUS_IMAGE"
+            echo "Rolling back to: $PREVIOUS_IMAGE"
 
-                        docker stop cicd-app || true
-                        docker rm cicd-app || true
+            docker stop cicd-app || true
+            docker rm cicd-app || true
 
-                        docker run -d \
-                            --name cicd-app \
-                            --restart unless-stopped \
-                            -p 8081:8081 \
-                            "$PREVIOUS_IMAGE"
+            docker run -d \
+                --name cicd-app \
+                --restart unless-stopped \
+                -p 8081:8081 \
+                "$PREVIOUS_IMAGE"
 
-                        echo "Rollback completed."
+            echo "Rollback completed."
 
-                    else
+        else
 
-                        echo "No previous image available for rollback."
-                        exit 1
+            echo "No previous image available for rollback."
+            exit 1
 
-                    fi
-                '''
+        fi
+    '''
 
-                error("Deployment failed. Previous version restored.")
-            }
+    echo "Checking rolled-back application..."
+
+    def rollbackHealthCheck = sh(
+        script: '''
+            for i in $(seq 1 12); do
+
+                echo "Rollback health check attempt $i..."
+
+                if curl --fail --silent \
+                    http://localhost:8081/hello; then
+
+                    echo ""
+                    echo "Rolled-back application is healthy!"
+                    exit 0
+                fi
+
+                echo "Rolled-back application not ready yet..."
+                sleep 5
+            done
+
+            echo "Rollback health check failed."
+            exit 1
+        ''',
+        returnStatus: true
+    )
+
+    if (rollbackHealthCheck != 0) {
+        error("CRITICAL: Deployment failed AND rollback health check failed!")
+    }
+
+    error("Deployment failed. Previous version restored successfully.")
+}
         }
     }
 }
