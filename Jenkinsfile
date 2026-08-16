@@ -83,79 +83,67 @@ pipeline {
         }
 
         stage('Deploy') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'DOCKER_USERNAME',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
+    steps {
+        withCredentials([usernamePassword(
+            credentialsId: 'dockerhub-credentials',
+            usernameVariable: 'DOCKER_USERNAME',
+            passwordVariable: 'DOCKER_PASSWORD'
+        )]) {
 
-                    sshagent(['oracle-vm-ssh']) {
+            sshagent(['oracle-vm-ssh']) {
 
-                        sh '''
-                            set -e
+                sh '''
+                    set -e
 
-                            NEW_IMAGE="$DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}"
+                    NEW_IMAGE="$DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}"
 
-                            echo "========================================"
-                            echo "Deploying to Oracle VM"
-                            echo "Host: $ORACLE_HOST"
-                            echo "Image: $NEW_IMAGE"
-                            echo "========================================"
+                    echo "========================================"
+                    echo "Deploying $NEW_IMAGE to Oracle VM"
+                    echo "========================================"
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ubuntu@$ORACLE_HOST \
-                                "docker pull $NEW_IMAGE"
+                    ssh -o StrictHostKeyChecking=no \
+                        ubuntu@$ORACLE_HOST \
+                        "docker pull $NEW_IMAGE"
 
-                            ssh -o StrictHostKeyChecking=no \
-                                ubuntu@$ORACLE_HOST << EOF
+                    ssh -o StrictHostKeyChecking=no \
+                        ubuntu@$ORACLE_HOST \
+                        "if docker inspect cicd-app >/dev/null 2>&1; then \
+                            docker inspect cicd-app --format='{{.Config.Image}}' > /tmp/cicd-previous-image.txt; \
+                            echo 'Previous image:'; \
+                            cat /tmp/cicd-previous-image.txt; \
+                         else \
+                            echo '' > /tmp/cicd-previous-image.txt; \
+                            echo 'No previous deployment found.'; \
+                         fi"
 
-                                set -e
+                    ssh -o StrictHostKeyChecking=no \
+                        ubuntu@$ORACLE_HOST \
+                        "docker stop cicd-app || true"
 
-                                echo "Checking current deployment..."
+                    ssh -o StrictHostKeyChecking=no \
+                        ubuntu@$ORACLE_HOST \
+                        "docker rm cicd-app || true"
 
-                                if docker inspect cicd-app >/dev/null 2>&1; then
+                    ssh -o StrictHostKeyChecking=no \
+                        ubuntu@$ORACLE_HOST \
+                        "docker run -d \
+                            --name cicd-app \
+                            --restart unless-stopped \
+                            -p 8081:8081 \
+                            $NEW_IMAGE"
 
-                                    PREVIOUS_IMAGE=\$(docker inspect cicd-app \
-                                        --format='{{.Config.Image}}')
+                    echo "New container started."
 
-                                    echo "\$PREVIOUS_IMAGE" > /tmp/cicd-previous-image.txt
+                    ssh -o StrictHostKeyChecking=no \
+                        ubuntu@$ORACLE_HOST \
+                        "docker ps --filter name=cicd-app"
 
-                                    echo "Previous image: \$PREVIOUS_IMAGE"
-
-                                else
-
-                                    echo "" > /tmp/cicd-previous-image.txt
-
-                                    echo "No previous deployment found."
-
-                                fi
-
-                                echo "Stopping old container..."
-
-                                docker stop cicd-app || true
-                                docker rm cicd-app || true
-
-                                echo "Starting new container..."
-
-                                docker run -d \
-                                    --name cicd-app \
-                                    --restart unless-stopped \
-                                    -p 8081:8081 \
-                                    "$NEW_IMAGE"
-
-                                echo "New container started."
-
-                                docker ps --filter "name=cicd-app"
-
-                                EOF
-
-                            echo "Deployment completed successfully."
-                        '''
-                    }
-                }
+                    echo "Deployment completed successfully."
+                '''
             }
         }
+    }
+}
 
         stage('Health Check') {
             steps {
