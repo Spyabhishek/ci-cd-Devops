@@ -42,6 +42,18 @@ pipeline {
                 sh 'docker build -t cicd-app:${BUILD_NUMBER} .'
             }
         }
+
+        stage('Trivy Scan') {
+            steps {
+                sh '''
+                    trivy image \
+                      --timeout 10m \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 1 \
+                      cicd-app:${BUILD_NUMBER}
+                '''
+            }
+        }
     }
 
     post {
