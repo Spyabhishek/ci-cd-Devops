@@ -80,48 +80,108 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'DOCKER_USERNAME',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
-                    sh '''
-                        echo "$DOCKER_PASSWORD" | docker login \
-                            -u "$DOCKER_USERNAME" \
-                            --password-stdin
+stage('Deploy') {
+    steps {
+        withCredentials([usernamePassword(
+            credentialsId: 'dockerhub-credentials',
+            usernameVariable: 'DOCKER_USERNAME',
+            passwordVariable: 'DOCKER_PASSWORD'
+        )]) {
+            sh '''
+                set -e
 
-                        docker pull \
-                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+                NEW_IMAGE="$DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}"
+
+                echo "New image: $NEW_IMAGE"
+
+                # Save currently deployed image for rollback
+                if docker inspect cicd-app >/dev/null 2>&1; then
+                    PREVIOUS_IMAGE=$(docker inspect cicd-app \
+                        --format='{{.Config.Image}}')
+                    echo "Previous image: $PREVIOUS_IMAGE"
+                else
+                    PREVIOUS_IMAGE=""
+                    echo "No previous deployment found."
+                fi
+
+                # Make variables available to the next stage
+                echo "$PREVIOUS_IMAGE" > previous_image.txt
+                echo "$NEW_IMAGE" > new_image.txt
+
+                echo "$DOCKER_PASSWORD" | docker login \
+                    -u "$DOCKER_USERNAME" \
+                    --password-stdin
+
+                docker pull "$NEW_IMAGE"
+
+                docker stop cicd-app || true
+                docker rm cicd-app || true
+
+                docker run -d \
+                    --name cicd-app \
+                    --restart unless-stopped \
+                    -p 8081:8081 \
+                    "$NEW_IMAGE"
+
+                docker logout
+            '''
+        }
+    }
+}
+
+stage('Health Check') {
+    steps {
+        script {
+            def healthCheck = sh(
+                script: '''
+                    for i in {1..12}; do
+                        echo "Health check attempt $i..."
+
+                        if curl --fail --silent \
+                            http://localhost:8081/hello; then
+                            echo ""
+                            echo "Application is healthy!"
+                            exit 0
+                        fi
+
+                        sleep 5
+                    done
+
+                    exit 1
+                ''',
+                returnStatus: true
+            )
+
+            if (healthCheck != 0) {
+                echo "Health check FAILED. Starting rollback..."
+
+                sh '''
+                    PREVIOUS_IMAGE=$(cat previous_image.txt)
+
+                    if [ -n "$PREVIOUS_IMAGE" ]; then
+                        echo "Rolling back to: $PREVIOUS_IMAGE"
 
                         docker stop cicd-app || true
                         docker rm cicd-app || true
 
                         docker run -d \
                             --name cicd-app \
+                            --restart unless-stopped \
                             -p 8081:8081 \
-                            $DOCKER_USERNAME/cicd-app:${BUILD_NUMBER}
+                            "$PREVIOUS_IMAGE"
 
-                        docker logout
-                    '''
-                }
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                sh '''
-                    echo "Waiting for application to start..."
-                    sleep 10
-
-                    curl --fail http://localhost:8081/hello
-
-                    echo "Application is healthy!"
+                        echo "Rollback completed."
+                    else
+                        echo "No previous image available for rollback."
+                        exit 1
+                    fi
                 '''
+
+                error("Deployment failed. Previous version restored.")
             }
         }
     }
+}
 
     post {
         success {
