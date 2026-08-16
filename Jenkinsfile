@@ -9,6 +9,18 @@ pipeline {
             }
         }
 
+        stage('Test Oracle SSH') {
+    steps {
+        sshagent(['oracle-vm-ssh']) {
+            sh '''
+                ssh -o StrictHostKeyChecking=no \
+                    ubuntu@130.210.25.196 \
+                    "whoami && hostname && docker ps"
+            '''
+        }
+    }
+}
+
         stage('Build & Test') {
             steps {
                 sh './mvnw clean test'
